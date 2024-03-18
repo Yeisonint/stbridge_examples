@@ -165,7 +165,7 @@ namespace STlinkBridge{
             log_info_(std::format("input CLK: {0} KHz, ST-Link HCLK: {1} KHz",comInputClkKHz_,StlHClkKHz_));
             return {comInputClkKHz_,StlHClkKHz_};
         }
-
+        //GPIO
         void configGPIO(Brg_GpioInitT &gpioParams){
             if(m_pBrg_==nullptr){
                 log_err_("Open device first");
@@ -177,15 +177,155 @@ namespace STlinkBridge{
                         gpioParams.GpioMask, gpioParams.pGpioConf[i].Mode, gpioParams.pGpioConf[i].Pull),false);
             }
         }
-        void readGPIO(Brg_GpioInitT &gpioParams, Brg_GpioValT &gpioReadVal){
+        uint8_t readGPIO(uint8_t GpioMask, Brg_GpioValT &gpioReadVal){
             if(m_pBrg_==nullptr){
                 log_err_("Open device first");
             }
             uint8_t gpioErrMsk;
-            brgStat_ = m_pBrg_->ReadGPIO(gpioParams.GpioMask, &gpioReadVal, &gpioErrMsk);
+            brgStat_ = m_pBrg_->ReadGPIO(GpioMask, &gpioReadVal, &gpioErrMsk);
             if( (brgStat_ != BRG_NO_ERR) || (gpioErrMsk!=0) ) {
                 log_err_(std::format(" Bridge Read error: {}",gpioErrMsk));
             }
+            return gpioErrMsk;
         }
+
+        uint8_t writeGPIO(uint8_t GpioMask, Brg_GpioValT &gpioWriteVal){
+            if(m_pBrg_==nullptr){
+                log_err_("Open device first");
+            }
+            uint8_t gpioErrMsk;
+            brgStat_ = m_pBrg_->SetResetGPIO(GpioMask, &gpioWriteVal, &gpioErrMsk);
+            if( (brgStat_ != BRG_NO_ERR) || (gpioErrMsk!=0) ) {
+                log_err_(std::format(" Bridge write error: {}",gpioErrMsk));
+            }
+            return gpioErrMsk;
+        }
+        //I2C
+        void initI2C(){
+            printf("I2C test start\n");
+            Brg_I2cInitT i2cParam;
+            int freqKHz = 100; //100KHz
+            uint32_t timingReg; 
+            int riseTimeNs, fallTimeNs, DNF;
+            bool analogFilter;
+            uint16_t sizeWithoutErr = 0;
+            uint8_t dataRx[3072], dataTx[3072]; //max size must be aligned with target buffer
+            // uint16_t i2cSlaveAddr = 0x39>>1;// convert to 7bit address
+            uint16_t i2cSlaveAddr = 0x39;// convert to 7bit address
+
+            // I2C_FAST freqKHz: 1-400KHz I2C_FAST_PLUS: 1-1000KHz
+            riseTimeNs = 0; //0-300ns
+            fallTimeNs = 0; //0-300ns
+            DNF = 0; // digital filter OFF
+            analogFilter = true;
+
+            brgStat_ = m_pBrg_->GetI2cTiming(I2C_FAST, freqKHz, DNF, riseTimeNs, fallTimeNs, analogFilter, &timingReg);
+            // example I2C_STANDARD, I2C input CLK= 192MHz, rise/fall time (ns) = 0, analog filter on, dnf=0
+            // I2C freq = 400KHz timingReg = 0x20602274
+            if( brgStat_ == BRG_NO_ERR ) {
+                i2cParam.TimingReg = timingReg;
+                i2cParam.OwnAddr = 0; // 0  unused in I2C master mode
+                i2cParam.AddrMode = I2C_ADDR_7BIT;
+                i2cParam.AnFilterEn = I2C_FILTER_ENABLE;
+                i2cParam.DigitalFilterEn = I2C_FILTER_DISABLE;
+                i2cParam.Dnf = (uint8_t)DNF; //0
+                brgStat_ = m_pBrg_->InitI2C(&i2cParam);
+            } else {
+                    printf("I2C timing error, timing reg: 0x%08x\n", timingReg);
+            }
+
+            // 1- send 2 bytes : 1 byte regist address,1 byte data
+            dataTx[0] = '#';// register address
+            dataTx[1] = 'a';// data
+            dataTx[2] = 'b';// data
+            dataTx[3] = 'c';// data
+            dataTx[4] = 'd';// data
+            dataTx[5] = 'e';// data
+            dataTx[6] = 'f';// data
+            dataTx[7] = 'g';// data
+            brgStat_ = m_pBrg_->WriteI2C(dataTx, i2cSlaveAddr, 8, &sizeWithoutErr);
+            // or brgStat_ = m_pBrg_->WriteI2C((uint8_t*)&txSize, I2C_7B_ADDR(_i2cSlaveAddr), 4, &sizeWithoutErr);
+            if( brgStat_ != BRG_NO_ERR ) {
+                printf("BRG Write data size error (sent %d instead of 2)\n", (int)sizeWithoutErr);
+            }else{
+                printf("write reg 0xff sucess\n");
+            }
+
+            // 2-send to read regist address
+            dataTx[0] = 0x00;// read regist address
+            brgStat_ = m_pBrg_->WriteI2C(dataTx, i2cSlaveAddr, 1, &sizeWithoutErr);
+            if( brgStat_ != BRG_NO_ERR ) {
+                printf("BRG Write data size error (sent %d instead of 4)\n", (int)sizeWithoutErr);
+            }
+            // 3- read 4bytes data
+            if( brgStat_ == BRG_NO_ERR ) {
+                sizeWithoutErr = 0;
+                brgStat_ = m_pBrg_->ReadI2C(dataRx, i2cSlaveAddr, 8, &sizeWithoutErr);
+                if( brgStat_ != BRG_NO_ERR ) {
+                    printf("BRG Read back data size error (read %d instead of 4)\n", (int)sizeWithoutErr);
+                } else {
+                    for (int i = 0; i < 8; i++)
+                    {
+                        printf("reg value is : 0x%02x\n", dataRx[i]);
+                    }
+                }
+            }
+
+            printf("I2C test end\n");
+        }
+
+    Brg_StatusT BrgRxTxVerifData(uint8_t*pRxBuff, uint8_t*pTxBuff, uint16_t size)
+    {
+        int i, nb;
+        uint16_t sizeWithoutErr =0;
+        uint32_t txSize,rxSize=0;
+        Brg_I2cAddrModeT addrMode = I2C_ADDR_7BIT;
+        uint16_t i2cSlaveAddr = 0x39;
+
+        txSize = (uint32_t) size;
+
+        // 1- send 4 bytes = data size,
+        brgStat_ = m_pBrg_->WriteI2C((uint8_t*)&txSize, i2cSlaveAddr, addrMode, 4, &sizeWithoutErr);
+        // or brgStat = m_pBrg_->WriteI2C((uint8_t*)&txSize, I2C_7B_ADDR(_i2cSlaveAddr), 4, &sizeWithoutErr);
+        if( brgStat_ != BRG_NO_ERR ) {
+            printf("BRG Write data size error (sent %d instead of 4)\n", (int)sizeWithoutErr);
+        }
+        // 2- wait to receive it back
+        if( brgStat_ == BRG_NO_ERR ) {
+            sizeWithoutErr = 0;
+            brgStat_ = m_pBrg_->ReadI2C((uint8_t*)&rxSize, i2cSlaveAddr, addrMode, 4, &sizeWithoutErr);
+            // or brgStat_ = m_pBrg_->ReadI2C((uint8_t*)&rxSize, I2C_7B_ADDR(i2cSlaveAddr), 4, &sizeWithoutErr);
+            if( brgStat_ != BRG_NO_ERR ) {
+                printf("BRG Read back data size error (read %d instead of 4)\n", (int)sizeWithoutErr);
+            } else {
+                if( rxSize != txSize ) {
+                    brgStat_ = BRG_VERIF_ERR;
+                    printf("BRG Read back RxSize = %d different from TxSize = %d \n", (int)rxSize, (int)txSize);
+                }
+            }
+        }
+        // 3- send data size bytes
+        if( brgStat_ == BRG_NO_ERR ) {
+            sizeWithoutErr = 0;
+            brgStat_ = m_pBrg_->WriteI2C(pTxBuff, i2cSlaveAddr, addrMode, size, &sizeWithoutErr);
+            if( brgStat_ != BRG_NO_ERR ) {
+                printf("BRG Write data error (sent %d instead of %d)\n", (int)sizeWithoutErr, (int)size);
+            }
+        }
+        // 4- wait to receive same data size bytes back.
+        if( brgStat_ == BRG_NO_ERR ) {
+            sizeWithoutErr = 0;
+            brgStat_ = m_pBrg_->ReadI2C(pRxBuff, i2cSlaveAddr, addrMode, size, &sizeWithoutErr);
+            if( brgStat_ != BRG_NO_ERR ) {
+                printf("BRG Read back data error (read %d instead of %d)\n", (int)sizeWithoutErr, (int)size);
+            } else {
+                if( memcmp(pRxBuff, pTxBuff, size) !=0 ) {
+                    brgStat_ = BRG_VERIF_ERR;
+                    printf("BRG ERROR Read/Write verification error(s)\n");
+                }
+            }
+        }	
+        return brgStat_;
+    }
     };
 }

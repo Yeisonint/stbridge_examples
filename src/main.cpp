@@ -14,7 +14,7 @@ int main(int argc, char **argv){
     for(int i=0; i<BRG_GPIO_MAX_NB; i++) {
         gpioConf[i].Mode = GPIO_MODE_INPUT;
         gpioConf[i].Speed = GPIO_SPEED_MEDIUM;
-        gpioConf[i].Pull = GPIO_PULL_DOWN;
+        gpioConf[i].Pull = GPIO_NO_PULL;
         gpioConf[i].OutputType = GPIO_OUTPUT_PUSHPULL; // unused in input mode
     }
     Brg_GpioInitT gpioParams={
@@ -23,11 +23,13 @@ int main(int argc, char **argv){
         .pGpioConf = &gpioConf[0]};
     Brg_GpioValT gpioReadVal[BRG_GPIO_MAX_NB];
     bridge.configGPIO(gpioParams);
-    bridge.readGPIO(gpioParams,gpioReadVal[0]);
+    bridge.readGPIO(BRG_GPIO_ALL,gpioReadVal[0]);
     for(int i=0; i<BRG_GPIO_MAX_NB; i++) {
-        // std::cout << "GPIO " << i << " Value: " << (gpioReadVal[i]==GPIO_SET?"High":"Low") << std::endl;
-        std::cout << "GPIO " << i << " Value: " << gpioReadVal[i] << std::endl;
+        std::cout << "GPIO " << i << " Value: " << (gpioReadVal[i]==GPIO_SET?"High":"Low") << std::endl;
     }
+
+    // I2C
+    bridge.initI2C();
     bridge.close();
     return 0;
 }
